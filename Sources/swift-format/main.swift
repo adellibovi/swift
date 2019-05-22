@@ -15,23 +15,79 @@ import Foundation
 import SwiftFormat
 import SwiftFormatConfiguration
 import SwiftFormatCore
+import SwiftSyntax
 import Utility
 
+final class ThreadSafe<A> {
+    private var _value: A
+    private let queue = DispatchQueue(label: "ThreadSafe")
+    init(_ value: A) {
+        self._value = value
+    }
+
+    var value: A {
+        return queue.sync { _value }
+    }
+
+    func atomically(_ transform: (inout A) -> ()) {
+        queue.sync {
+            transform(&self._value)
+        }
+    }
+}
+
+extension Array {
+    func concurrentMap<B>(_ transform: @escaping (Element) throws -> B) -> [B] {
+        let result = ThreadSafe(Array<B?>(repeating: nil, count: count))
+        DispatchQueue.concurrentPerform(iterations: count) { idx in
+            let element = self[idx]
+            do {
+                let transformed = try transform(element)
+                result.atomically {
+                    $0[idx] = transformed
+                }
+            } catch {
+                print(error)
+                fatalError()
+            }
+        }
+        return result.value.map { $0! }
+
+    }
+}
+
 fileprivate func main(_ arguments: [String]) -> Int32 {
+    struct FormatMainArguments {
+        let formatter: SwiftFormatter
+        let sourceFile: Syntax
+        let path: String
+        let inPlace: Bool
+    }
   let url = URL(fileURLWithPath: arguments.first!)
   let options = processArguments(commandName: url.lastPathComponent, Array(arguments.dropFirst()))
   switch options.mode {
   case .format:
-    var ret = 0
-    for path in FileIterator(paths: options.paths) {
-      let configuration = loadConfiguration(
-        forSwiftFile: path, configFilePath: options.configurationPath)
-      ret |= formatMain(
-        configuration: configuration,
-        path: path,
-        inPlace: options.inPlace,
-        debugOptions: options.debugOptions)
-    }
+    let fileIterator = FileIterator(paths: options.paths)
+    let ret = Array<String>(fileIterator)
+        .concurrentMap { (path) -> FormatMainArguments in
+            let configuration = loadConfiguration(
+                forSwiftFile: path,
+                configFilePath: options.configurationPath)
+            let formatter = SwiftFormatter(configuration: configuration, diagnosticEngine: nil)
+            formatter.debugOptions = options.debugOptions
+            return FormatMainArguments(
+                formatter: formatter,
+                sourceFile: try! formatter.parse(contentsOf: URL(string: path)!),
+                path: path,
+                inPlace: options.inPlace
+            )
+        }.map {
+            formatMain(
+                with: $0.formatter,
+                sourceFile: $0.sourceFile,
+                path: $0.path,
+                inPlace: $0.inPlace)
+    }.reduce(into: 0, |=)
     return Int32(ret)
   case .lint:
     var ret = 0

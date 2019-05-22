@@ -40,26 +40,16 @@ public final class SwiftFormatter {
     self.diagnosticEngine = diagnosticEngine
   }
 
-  /// Formats the Swift code at the given file URL and writes the result to an output stream.
-  ///
-  /// - Parameters:
-  ///   - url: The URL of the file containing the code to format.
-  ///   - outputStream: A value conforming to `TextOutputStream` to which the formatted output will
-  ///     be written.
-  /// - Throws: If an unrecoverable error occurs when formatting the code.
-  public func format<Output: TextOutputStream>(
-    contentsOf url: URL, to outputStream: inout Output
-  ) throws {
-    guard FileManager.default.isReadableFile(atPath: url.path) else {
-      throw SwiftFormatError.fileNotReadable
+    public func parse(contentsOf url: URL) throws -> Syntax {
+        guard FileManager.default.isReadableFile(atPath: url.path) else {
+            throw SwiftFormatError.fileNotReadable
+        }
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+            throw SwiftFormatError.isDirectory
+        }
+        return try SyntaxTreeParser.parse(url)
     }
-    var isDir: ObjCBool = false
-    if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-      throw SwiftFormatError.isDirectory
-    }
-    let sourceFile = try SyntaxTreeParser.parse(url)
-    try format(syntax: sourceFile, assumingFileURL: url, to: &outputStream)
-  }
 
   /// Formats the given Swift syntax tree and writes the result to an output stream.
   ///
